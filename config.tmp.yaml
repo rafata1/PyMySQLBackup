@@ -1,0 +1,18 @@
+backups:
+  - name: daily_backup
+    cron: "0 2 * * *"
+    mysql:
+      host: 127.0.0.1
+      port: 3306
+      user: backup
+      password: backup
+      database: tc-api
+      tables:
+        - my_table1
+        - my_table2
+    output_dir: ./tmp
+    s3:
+      bucket: my_bucket
+      access_key: secret
+      secret_key: my_secret_key
+      region: ap-southeast-1
