@@ -43,6 +43,10 @@ class Backup:
 class UploadedFile:
     file_path: str
     size: int
+    dump_duration: Optional[int] = None
+    compress_duration: Optional[int] = None
+    upload_duration: Optional[int] = None
+    total_duration: Optional[int] = None
 
 
 class Backuper:
@@ -141,26 +145,52 @@ class Backuper:
         timestamp = int(time.time())
         dump_folder = f"{backup.output_dir}/{backup.name}_{timestamp}"
         os.makedirs(dump_folder, exist_ok=True)
+        start_time = time.time()
         self.dump_database(backup.database, dump_folder)
+        dump_duration = int(time.time() - start_time)
+        start_time = time.time()
         compressed_file_path = self.compress_file(dump_folder)
+        compress_duration = int(time.time() - start_time)
         uploaded_file_size = self.get_file_size(compressed_file_path)
         self.remove_dir(dump_folder)
+        start_time = time.time()
         self.upload_to_s3(compressed_file_path, backup.s3)
+        upload_duration = int(time.time() - start_time)
         self.remove_dir(compressed_file_path)
-        return UploadedFile(file_path=compressed_file_path, size=uploaded_file_size)
+        return UploadedFile(
+            file_path=compressed_file_path,
+            size=uploaded_file_size,
+            dump_duration=dump_duration,
+            compress_duration=compress_duration,
+            upload_duration=upload_duration,
+            total_duration=dump_duration + compress_duration + upload_duration
+        )
 
     def do_backup_table(self, backup: Backup):
         timestamp = int(time.time())
         dump_folder = f"{backup.output_dir}/{backup.name}_{timestamp}"
         os.makedirs(dump_folder, exist_ok=True)
+        start_time = time.time()
         for table in backup.database.tables:
             self.dump_table(backup.database, dump_folder, table)
+        dump_duration = int(time.time() - start_time)
+        start_time = time.time()
         compressed_file_path = self.compress_file(dump_folder)
+        compress_duration = int(time.time() - start_time)
         uploaded_file_size = self.get_file_size(compressed_file_path)
         self.remove_dir(dump_folder)
+        start_time = time.time()
         self.upload_to_s3(compressed_file_path, backup.s3)
+        upload_duration = int(time.time() - start_time)
         self.remove_dir(compressed_file_path)
-        return UploadedFile(file_path=compressed_file_path, size=uploaded_file_size)
+        return UploadedFile(
+            file_path=compressed_file_path,
+            size=uploaded_file_size,
+            dump_duration=dump_duration,
+            compress_duration=compress_duration,
+            upload_duration=upload_duration,
+            total_duration=dump_duration + compress_duration + upload_duration
+        )
 
     def do_backup(self, backup: Backup):
         os.makedirs(backup.output_dir, exist_ok=True)
@@ -194,8 +224,15 @@ class Backuper:
                         "Data": "Backup uploaded successfully"
                     },
                     "Body": {
-                        "Text": {
-                            "Data": f"Backup {backup_conf.name} successfully. File: {uploaded_file.file_path}, Size: {uploaded_file.size}"
+                        "Html": {
+                            "Data": f"""<p>Backup {backup_conf.name} successfully.</p>
+                            <p><strong>File: {uploaded_file.file_path}</strong></p>
+                            <p><strong>Size: {uploaded_file.size}<strong></p>
+                            <p><strong>Dump Duration: {uploaded_file.dump_duration}s</strong></p>
+                            <p><strong>Compress Duration: {uploaded_file.compress_duration}s</strong></p>
+                            <p><strong>Upload Duration: {uploaded_file.upload_duration}s</strong></p>
+                            <p><strong>Total Duration: {uploaded_file.total_duration}s</strong></p>
+                            """
                         }
                     }
                 }

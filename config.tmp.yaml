@@ -16,3 +16,5 @@ backups:
       access_key: secret
       secret_key: my_secret_key
       region: ap-southeast-1
+      sender_email: "sender@sample.com"
+      recipient_email: "recipient@sample.com"
