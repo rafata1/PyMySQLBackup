@@ -6,6 +6,9 @@ import boto3
 import yaml
 from dataclasses import dataclass
 
+from apscheduler.schedulers.blocking import BlockingScheduler
+from apscheduler.triggers.cron import CronTrigger
+
 
 @dataclass
 class MySQLConfig:
@@ -90,7 +93,7 @@ class Backuper:
             print(e)
             self.failed_dumps.append(f"{mysql_config.database}/{table}")
 
-    def compress_file(self, file_path: str):
+    def compress_file(self, file_path: str) -> str:
         print(f"Compressing {file_path}")
         compressed_file_path = f"{file_path}.tar.gz"
         compress_command = ["tar", "-czvf", compressed_file_path, file_path]
@@ -135,34 +138,40 @@ class Backuper:
             self.failed_uploads.append(file_path)
 
     def do_backup_database(self, backup: Backup):
-        self.dump_database(backup.database, backup.output_dir)
-        compressed_file_path = self.compress_file(backup.output_dir)
+        timestamp = int(time.time())
+        dump_folder = f"{backup.output_dir}/{backup.name}_{timestamp}"
+        os.makedirs(dump_folder, exist_ok=True)
+        self.dump_database(backup.database, dump_folder)
+        compressed_file_path = self.compress_file(dump_folder)
+        self.remove_dir(dump_folder)
         self.upload_to_s3(compressed_file_path, backup.s3)
-        self.remove_dir(backup.output_dir)
         self.remove_dir(compressed_file_path)
 
     def do_backup_table(self, backup: Backup):
+        timestamp = int(time.time())
+        dump_folder = f"{backup.output_dir}/{backup.name}_{timestamp}"
+        os.makedirs(dump_folder, exist_ok=True)
         for table in backup.database.tables:
-            self.dump_table(backup.database, backup.output_dir, table)
-        compressed_file_path = self.compress_file(backup.output_dir)
+            self.dump_table(backup.database, dump_folder, table)
+        compressed_file_path = self.compress_file(dump_folder)
+        self.remove_dir(dump_folder)
         self.upload_to_s3(compressed_file_path, backup.s3)
-        self.remove_dir(backup.output_dir)
         self.remove_dir(compressed_file_path)
 
     def do_backup(self, backup: Backup):
-        timestamp = int(time.time())
-        sub_output_dir = f"{backup.output_dir}/{backup.name}_{timestamp}"
-        os.makedirs(sub_output_dir, exist_ok=True)
-        backup.output_dir = sub_output_dir
+        os.makedirs(backup.output_dir, exist_ok=True)
         if backup.database.tables:
             self.do_backup_table(backup)
-            return
-        self.do_backup_database(backup)
+        else:
+            self.do_backup_database(backup)
+        self.remove_dir(backup.output_dir)
 
-    def run(self):
+    def start(self):
         with open("config.yaml", "r") as f:
             config = yaml.safe_load(f)
-        for backup in config['backups']:
+
+        scheduler = BlockingScheduler()
+        for backup in config["backups"]:
             database_config = MySQLConfig(**backup['mysql'])
             s3_config = S3Config(**backup['s3'])
             backup_obj = Backup(
@@ -172,13 +181,25 @@ class Backuper:
                 output_dir=backup['output_dir'],
                 s3=s3_config
             )
-            self.do_backup(backup_obj)
 
-        print(f"dumps: {len(self.dumped_files)}/{len(self.failed_dumps) + len(self.dumped_files)}")
-        print(
-            f"compressions: {len(self.compressed_files)}/{len(self.failed_compressions) + len(self.compressed_files)}")
-        print(f"uploads: {len(self.uploaded_files)}/{len(self.failed_uploads) + len(self.uploaded_files)}")
+            cron_parts = backup_obj.cron.split(" ")
+            if len(cron_parts) != 5:
+                print(f"Invalid cron format for {backup_obj.name}")
+                return
+
+            trigger = CronTrigger.from_crontab(backup_obj.cron)
+            scheduler.add_job(
+                self.do_backup,
+                trigger=trigger,
+                args=[backup_obj]
+            )
+            print(f"Added backup job for {backup_obj.name}: ", cron_parts)
+
+        try:
+            scheduler.start()
+        except (KeyboardInterrupt, SystemExit):
+            pass
 
 
 backuper = Backuper()
-backuper.run()
+backuper.start()
