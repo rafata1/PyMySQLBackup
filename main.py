@@ -41,8 +41,6 @@ class Backuper:
     failed_compressions = []
     uploaded_files = []
     failed_uploads = []
-    cleaned_files = []
-    failed_cleanups = []
 
     def dump_database(self, mysql_config: MySQLConfig, output_dir: str) -> str:
         dump_command = [
@@ -107,17 +105,16 @@ class Backuper:
             self.failed_compressions.append(file_path)
             return
 
-    def remove_file(self, file_path: str):
-        print(f"Removing {file_path}")
-        remove_command = ["rm", file_path]
+    @staticmethod
+    def remove_dir(dir: str):
+        print(f"Removing {dir}")
+        remove_command = ["rm", "-rf", dir]
         try:
             subprocess.run(remove_command)
-            self.cleaned_files.append(file_path)
-            print(f"Removed {file_path}")
+            print(f"Removed {dir}")
         except Exception as e:
-            print(f"Failed to remove {file_path}")
+            print(f"Failed to remove {dir}")
             print(e)
-            self.failed_cleanups.append(file_path)
 
     def upload_to_s3(self, file_path: str, s3_conf: S3Config):
         print(f"Uploading {file_path} to {s3_conf.bucket}")
@@ -138,21 +135,19 @@ class Backuper:
             self.failed_uploads.append(file_path)
 
     def do_backup_database(self, backup: Backup):
-        timestamp = int(time.time())
-        sub_output_dir = f"{backup.output_dir}/{backup.name}_{timestamp}"
-        os.makedirs(sub_output_dir, exist_ok=True)
-        backup.output_dir = sub_output_dir
-        file_path = self.dump_database(backup.database, backup.output_dir)
-        compressed_file_path = self.compress_file(file_path)
+        self.dump_database(backup.database, backup.output_dir)
+        compressed_file_path = self.compress_file(backup.output_dir)
         self.upload_to_s3(compressed_file_path, backup.s3)
-        self.remove_file(compressed_file_path)
+        self.remove_dir(backup.output_dir)
+        self.remove_dir(compressed_file_path)
 
     def do_backup_table(self, backup: Backup):
         for table in backup.database.tables:
             self.dump_table(backup.database, backup.output_dir, table)
         compressed_file_path = self.compress_file(backup.output_dir)
         self.upload_to_s3(compressed_file_path, backup.s3)
-        self.remove_file(compressed_file_path)
+        self.remove_dir(backup.output_dir)
+        self.remove_dir(compressed_file_path)
 
     def do_backup(self, backup: Backup):
         timestamp = int(time.time())
@@ -183,7 +178,6 @@ class Backuper:
         print(
             f"compressions: {len(self.compressed_files)}/{len(self.failed_compressions) + len(self.compressed_files)}")
         print(f"uploads: {len(self.uploaded_files)}/{len(self.failed_uploads) + len(self.uploaded_files)}")
-        print(f"cleanups: {len(self.cleaned_files)}/{len(self.failed_cleanups) + len(self.cleaned_files)}")
 
 
 backuper = Backuper()
